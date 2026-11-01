@@ -132,11 +132,11 @@ h1 .big{font-size:1.55em;color:#fff;text-shadow:0 3px 0 var(--orange),0 7px 0 va
 .verdict.success{border-color:var(--mint)}.verdict.success b{color:var(--mint)}.verdict.error{border-color:var(--bad)}.verdict.error b{color:var(--bad)}
 
 /* ---------- game ---------- */
-.game-page{position:fixed;inset:0;background:radial-gradient(ellipse at 50% 30%,#2a1648,#0a0614);display:grid;place-items:center;overflow:hidden}
-.phone{position:relative;width:min(100vw,440px);height:100dvh;max-height:100dvh;overflow:hidden;touch-action:none;user-select:none;-webkit-user-select:none;background:#120c1f;cursor:pointer}
-@media(min-width:600px) and (min-height:700px){.phone{height:min(100dvh - 32px,900px);border:6px solid #120c1f;border-radius:34px;box-shadow:0 0 0 4px var(--slate),0 0 0 7px var(--slate-o),0 30px 80px rgba(0,0,0,.6)}}
-.stage{position:absolute;inset:0}.stage canvas{display:block;width:100%;height:100%;image-rendering:pixelated}
-.game-hud{position:absolute;top:0;left:0;right:0;padding:calc(env(safe-area-inset-top) + 10px) 12px 26px;pointer-events:none;background:linear-gradient(rgba(10,6,20,.75),rgba(10,6,20,0));display:grid;gap:8px}
+.game-page{position:fixed;inset:0;background:#120c1f;overflow:hidden;width:100%;height:100%}
+.phone{position:absolute;inset:0;width:100%;height:100%;overflow:hidden;touch-action:none;user-select:none;-webkit-user-select:none;background:#120c1f;cursor:pointer}
+.stage{position:absolute;inset:0;width:100%;height:100%}.stage canvas{display:block;width:100%;height:100%;image-rendering:pixelated}
+.game-hud{position:absolute;top:0;left:0;right:0;padding:calc(env(safe-area-inset-top) + 12px) 16px 26px;pointer-events:none;background:linear-gradient(rgba(10,6,20,.82),rgba(10,6,20,0));display:grid;gap:8px}
+.game-hud > *{max-width:860px;margin-left:auto;margin-right:auto;width:100%}
 .game-hud .player-name{padding:7px 9px;font-size:9px}
 .hud-row{display:flex;align-items:center;gap:8px}.hud-row .trophy{margin-left:auto}
 .flap-row{display:flex;align-items:center;gap:10px}.flap-label{font:9px var(--f-ui);color:#fff;text-shadow:0 2px 0 #000}
