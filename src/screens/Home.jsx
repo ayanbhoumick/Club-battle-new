@@ -27,7 +27,7 @@ export function Home({ state, dispatch }) {
     <div className="home">
       <div className="title-block">
         <h1 aria-label="The Nth Move"><span>The</span><span className="big">Nth</span><span>Move</span></h1>
-        <p className="tagline">Verify the signal. Spend every flap.</p>
+        <p className="tagline">Verify the signal. Every correct guess earns an attempt.</p>
       </div>
       <div className="menu-card">
         <div className="watch-wrap"><Watch onPress={() => warp('research')} /><span className="watch-label">PLAY</span></div>
@@ -41,7 +41,7 @@ export function Home({ state, dispatch }) {
       <AnimatePresence>
         {sheet === 'scores' && <Sheet title="Best runs" onClose={() => setSheet(null)}>
           {runs.length === 0 ? <p className="muted">No runs yet. Finish a mission to set a score.</p> :
-            <ol className="board">{runs.map((r, i) => <li key={r.at}><span className="rank">{i + 1}</span><b>{fmt(r.score)}</b><span>{r.moves} flaps</span><span className={r.won ? 'ok' : 'bad'}>{r.won ? 'cleared' : 'crashed'}</span></li>)}</ol>}
+            <ol className="board">{runs.map((r, i) => <li key={r.at}><span className="rank">{i + 1}</span><b>{fmt(r.score)}</b><span>{r.moves} attempt{r.moves > 1 ? 's' : ''}</span><span className={r.won ? 'ok' : 'bad'}>{r.won ? 'cleared' : 'crashed'}</span></li>)}</ol>}
           {runs.length > 0 && <button className="text-btn" onClick={() => dispatch({ type: 'clearScores' })}>Clear scores</button>}
         </Sheet>}
         {sheet === 'options' && <Sheet title="Options" onClose={() => setSheet(null)}>
@@ -74,8 +74,8 @@ export function Home({ state, dispatch }) {
 
 const STEPS = [
   ['Read', 'Open the research note. It changes every run. Find how many items the verification round contains and enter that number.'],
-  ['Verify', 'Label each sample as human-made or AI-made. Samples are drawn at random: text, news, audio and images. Each correct label earns one flap.'],
-  ['Fly', 'Tap, click or press SPACE to flap. You have exactly N flaps: N−1 gates, then the exit pad. Land anywhere else and the trap wins.'],
+  ['Verify', 'Guess whether each sample is human-made or AI-made. Every correct guess earns exactly one attempt for the final challenge.'],
+  ['Fly', 'Tap, click or press SPACE to flap. The number of attempts you get is equal to the number of correct guesses. Clear the gates and land on the exit pad.'],
 ];
 export function How({ dispatch }) {
   return (

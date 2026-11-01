@@ -10,7 +10,7 @@ function run(moves,seed,jit,R){
   return s;
 }
 let bad=0;
-for(let n=2;n<=8;n++){
+for(let n=1;n<=8;n++){
   let perfect=0,j60=0,j100=0,total=60;
   for(let seed=1;seed<=total;seed++){
     const R=rng(seed*31+n);

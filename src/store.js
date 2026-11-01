@@ -8,7 +8,7 @@ export const initial = () => {
   const muted = savedSettings.muted ?? (savedSettings.sfx === false && savedSettings.music === false);
   return {
     ...makeRound(), screen: 'home', warp: null, correct: 0, answers: [], moves: 0, seed: 1 + Math.floor(Math.random() * 9999),
-    run: null, won: false, movesUsed: 0, score: 0,
+    run: null, won: false, movesUsed: 0, score: 0, attempts: 0, attemptsLeft: 0,
     best: get('nth-best', 0), bestScore: get('nth-best-score', 0),
     runs: get('nth-runs', []), settings: { ...DEFAULT_SETTINGS, ...savedSettings, muted },
   };
@@ -20,7 +20,7 @@ export function reducer(s, a) {
     case 'warp': return s.warp ? s : { ...s, warp: a.to };
     case 'warpDone': return { ...s, screen: s.warp ?? s.screen, warp: null };
     case 'answer': return { ...s, correct: s.correct + (a.ok ? 1 : 0), answers: [...s.answers, a.ok] };
-    case 'budget': return { ...s, moves: s.correct, screen: 'budget' };
+    case 'budget': return { ...s, moves: s.correct, attempts: s.correct, attemptsLeft: s.correct, screen: 'budget' };
     case 'finish': {
       const best = a.won ? Math.max(s.best, s.correct) : s.best;
       const bestScore = Math.max(s.bestScore, a.score);

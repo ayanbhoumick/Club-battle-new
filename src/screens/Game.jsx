@@ -14,10 +14,15 @@ const MSG = {
 };
 
 export default function Game({ state, dispatch }) {
-  const N = state.moves || 5, cv = useRef(), phoneRef = useRef(), chargeRef = useRef(), heroRef = useRef(), formRef = useRef('ben'), posRef = useRef({ x: 0, y: 0 }), simRef = useRef(), worldRef = useRef(), pausedRef = useRef(false);
+  const totalAttempts = Math.max(1, state.moves || state.correct || 1);
+  const N = totalAttempts;
+  const [attemptsLeft, setAttemptsLeft] = useState(totalAttempts);
+  const [attemptCount, setAttemptCount] = useState(1);
+
+  const cv = useRef(), phoneRef = useRef(), chargeRef = useRef(), heroRef = useRef(), formRef = useRef('ben'), posRef = useRef({ x: 0, y: 0 }), simRef = useRef(), worldRef = useRef(), pausedRef = useRef(false);
   const [ui, setUi] = useState({ status: 'ready', left: N, passed: 0, coins: 0 });
   const [paused, setPaused] = useState(false), [end, setEnd] = useState(null), [fail, setFail] = useState(false), [toast, setToast] = useState(null);
-  const gates = N - 1;
+  const gates = Math.max(0, N - 1);
   const [form, setFormState] = useState('ben'), [charged, setCharged] = useState(0), [fly, setFly] = useState([]), [flash, setFlash] = useState(null);
   const setForm = f => { formRef.current = f; setFormState(f); };
   const land = id => { setFly(l => l.filter(c => c.id !== id)); setCharged(c => c + 1); sfx.click(); };
@@ -58,11 +63,21 @@ export default function Game({ state, dispatch }) {
     }
     setUi({ status: sim.status, left: sim.flapsLeft, passed: sim.passed, coins: sim.coins });
     if (sim.status === 'won' || sim.status === 'lost') {
-      const won = sim.status === 'won', run = { passed: sim.passed, coins: sim.coins, used: sim.flapsUsed, cause: sim.cause };
-      dispatch({ type: 'finish', won, used: sim.flapsUsed, score: sim.score, run });
-      setTimeout(() => setEnd({ won, cause: sim.cause, score: sim.score, run }), won ? 1500 : 1100);
+      const won = sim.status === 'won';
+      if (won) {
+        const run = { passed: sim.passed, coins: sim.coins, used: sim.flapsUsed, cause: sim.cause, attempt: attemptCount, totalAttempts };
+        dispatch({ type: 'finish', won: true, used: sim.flapsUsed, score: sim.score, run });
+        setTimeout(() => setEnd({ won: true, cause: sim.cause, score: sim.score, run, attempt: attemptCount, totalAttempts, canRetry: false }), 1500);
+      } else {
+        const remaining = Math.max(0, attemptsLeft - 1);
+        setAttemptsLeft(remaining);
+        const canRetry = remaining > 0;
+        const run = { passed: sim.passed, coins: sim.coins, used: sim.flapsUsed, cause: sim.cause, attempt: attemptCount, totalAttempts, remaining };
+        dispatch({ type: 'finish', won: false, used: sim.flapsUsed, score: sim.score, run });
+        setTimeout(() => setEnd({ won: false, cause: sim.cause, score: sim.score, run, attempt: attemptCount, totalAttempts, remaining, canRetry }), 1100);
+      }
     }
-  }, [dispatch]);
+  }, [dispatch, attemptCount, totalAttempts, attemptsLeft]);
 
   useEffect(() => {
     const sim = new Sim(N, state.seed); simRef.current = sim; let w;
@@ -90,13 +105,28 @@ export default function Game({ state, dispatch }) {
   }, [onEvents, end]);
 
   const setPause = v => { pausedRef.current = v; setPaused(v); if (worldRef.current) worldRef.current.paused = v; };
-  const retry = () => { const s = simRef.current; s.reset(); worldRef.current.resetRun(); setEnd(null); setToast(null); setPause(false); setForm('ben'); setCharged(0); setFly([]); setFlash(null); setUi({ status: 'ready', left: N, passed: 0, coins: 0 }); };
+
+  const retry = () => {
+    if (attemptsLeft <= 0) return;
+    setAttemptCount(c => c + 1);
+    const s = simRef.current;
+    s.reset();
+    worldRef.current.resetRun();
+    setEnd(null);
+    setToast(null);
+    setPause(false);
+    setForm('ben');
+    setCharged(0);
+    setFly([]);
+    setFlash(null);
+    setUi({ status: 'ready', left: N, passed: 0, coins: 0 });
+  };
 
   useEffect(() => {
     const h = e => {
       if (e.key === ' ' || e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') { if (/BUTTON/.test(e.target.tagName) && e.key === ' ') return; e.preventDefault(); if (!e.repeat) flap(); }
       if (e.key === 'p' || e.key === 'Escape') { if (ui.status === 'playing' || paused) setPause(!pausedRef.current); }
-      if ((e.key === 'r' || e.key === 'R') && end) retry();
+      if ((e.key === 'r' || e.key === 'R') && end && end.canRetry) retry();
     };
     window.addEventListener('keydown', h); return () => window.removeEventListener('keydown', h);
   });
@@ -118,7 +148,10 @@ export default function Game({ state, dispatch }) {
             <div ref={chargeRef} className={`charge ${gates > 0 && charged >= gates ? 'full' : ''}`} role="img" aria-label={`Watch charge: ${charged} of ${gates} coins`}>
               <img className="charge-base" src={`${ART}omnitrix.png`} alt="" /><img className="charge-lit" src={`${ART}omnitrix.png`} alt="" style={{ clipPath: `inset(0 ${100 - (gates ? Math.min(1, charged / gates) * 100 : 0)}% 0 0)` }} />
               <b key={charged} className="bump">{charged}/{gates}</b></div></div>
-          <div className="flap-row"><span className="flap-label">Flaps</span><Hearts total={N} left={ui.left} />
+          <div className="flap-row">
+            <span className="flap-label">Attempts</span>
+            <Hearts total={totalAttempts} left={attemptsLeft} />
+            <span className="flap-label" style={{ marginLeft: 6 }}>Flap {ui.left}/{N}</span>
             <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
               <button
                 className="round-btn"
@@ -132,30 +165,64 @@ export default function Game({ state, dispatch }) {
               <button className="round-btn" onClick={() => setPause(true)} aria-label="Pause" disabled={ui.status !== 'playing'}>❚❚</button>
             </div>
           </div>
-          <div className="route" aria-label={`${ui.passed} of ${gates} gates cleared`}>{Array.from({ length: gates }, (_, i) => <span key={i} className={`gate-dot ${i < ui.passed ? 'done' : ''}`} />)}<span className="exit-flag">EXIT</span></div>
+          <div className="route" aria-label={`${ui.passed} of ${gates} gates cleared`}>
+            {Array.from({ length: gates }, (_, i) => <span key={i} className={`gate-dot ${i < ui.passed ? 'done' : ''}`} />)}
+            <span className="exit-flag">EXIT</span>
+          </div>
         </div>
         <AnimatePresence>{ui.status === 'ready' && !end && !fail && (
           <motion.div className="ready-prompt" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
             <p className="only-keys">press <Key wide>SPACE</Key> to start</p><p className="only-touch">tap anywhere to start</p>
-            <p className="rule">{N} flaps. {gates} gate{gates > 1 ? 's' : ''}, then the green pad.</p>
+            <p className="rule">
+              Attempt {attemptCount} of {totalAttempts}. {N} flap{N > 1 ? 's' : ''}. {gates > 0 ? `${gates} gate${gates > 1 ? 's' : ''}, then the green pad.` : 'Glide directly to the green pad.'}
+            </p>
           </motion.div>)}</AnimatePresence>
         <AnimatePresence>{toast && <motion.div className="toast" initial={{ y: -10, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ opacity: 0 }}>{toast}</motion.div>}</AnimatePresence>
         <AnimatePresence>{paused && !end && (
-          <motion.div className="overlay" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}><div className="card center"><h3>Paused</h3>
+          <motion.div className="overlay" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}><div className="card center">
+            <h3>Paused</h3>
+            <p className="muted small" style={{ marginBottom: 12 }}>Attempt {attemptCount} of {totalAttempts} ({attemptsLeft} left)</p>
             <Btn variant="play" className="block" onClick={() => setPause(false)} autoFocus>Resume</Btn>
             <div className="row" style={{ marginTop: 8 }}>
               <Btn variant="slate" onClick={toggleMute}>{isMuted ? 'Unmute 🔇' : 'Mute 🔊'}</Btn>
-              <Btn variant="slate" onClick={retry}>Restart</Btn>
+              {attemptsLeft > 1 ? <Btn variant="slate" onClick={() => { setAttemptsLeft(a => a - 1); retry(); }}>Restart run</Btn> : null}
               <Btn variant="slate" onClick={() => dispatch({ type: 'reset' })}>Menu</Btn>
             </div></div></motion.div>)}</AnimatePresence>
         <AnimatePresence>{end && (
           <motion.div className="overlay" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
             <motion.div className="card center end-card" initial={{ scale: .85, y: 20 }} animate={{ scale: 1, y: 0 }} transition={{ type: 'spring', stiffness: 260, damping: 18 }}>
-              <h2 className={end.won ? 'win' : 'lose'}>{end.won ? 'Exit reached' : 'Run over'}</h2>
+              <h2 className={end.won ? 'win' : 'lose'}>
+                {end.won ? 'Exit reached' : (end.canRetry ? `Attempt ${end.attempt} failed` : 'All attempts used')}
+              </h2>
               <div className="score-big sm">{fmt(end.score)}</div>
-              <p className="muted">{end.won ? `Cleared on flap ${end.run.used} of ${N}.` : MSG[end.cause] ?? MSG.trap}</p>
-              <Btn variant="play" className="block" onClick={() => dispatch({ type: 'go', screen: 'results' })} autoFocus>Mission report</Btn>
-              <div className="row"><Btn variant="slate" onClick={retry}>Retry <Key>R</Key></Btn><Btn variant="slate" onClick={() => dispatch({ type: 'reset' })}>Menu</Btn></div>
+              <p className="muted">
+                {end.won
+                  ? `Cleared on attempt ${end.attempt} of ${end.totalAttempts} (flap ${end.run.used} of ${N}).`
+                  : (end.canRetry
+                      ? `${MSG[end.cause] ?? MSG.trap} ${end.remaining} attempt${end.remaining > 1 ? 's' : ''} left.`
+                      : `Run over. You used all ${end.totalAttempts} attempts from your verification round.`)}
+              </p>
+              {end.canRetry ? (
+                <>
+                  <Btn variant="play" className="block" onClick={retry} autoFocus>
+                    Retry (Attempt {end.attempt + 1} of {end.totalAttempts}) <Key>R</Key>
+                  </Btn>
+                  <div className="row" style={{ marginTop: 8 }}>
+                    <Btn variant="slate" onClick={() => dispatch({ type: 'go', screen: 'results' })}>Report</Btn>
+                    <Btn variant="slate" onClick={() => dispatch({ type: 'reset' })}>Menu</Btn>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <Btn variant="play" className="block" onClick={() => dispatch({ type: 'go', screen: 'results' })} autoFocus>
+                    Mission report
+                  </Btn>
+                  <div className="row" style={{ marginTop: 8 }}>
+                    <Btn variant="slate" onClick={() => dispatch({ type: 'reset', screen: 'research' })}>New mission</Btn>
+                    <Btn variant="slate" onClick={() => dispatch({ type: 'reset' })}>Menu</Btn>
+                  </div>
+                </>
+              )}
             </motion.div></motion.div>)}</AnimatePresence>
       </div>
     </div>
