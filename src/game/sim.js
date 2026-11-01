@@ -6,9 +6,16 @@
 //  - The street holds N-1 gates, then the EXIT pad. Rest of the ground is a death trap.
 //  - You may reach the exit on ANY flap <= N. Wasting none is not required.
 //  - Out of flaps = you glide down: you win only if you land on the exit pad.
+//
+// INFINITE MODE (used by Game.jsx for the actual gameplay):
+//  - No exit pad, no flap limit — the bird runs forever until it crashes.
+//  - Pipes spawn procedurally; speed scales up with score.
 
 export const DT = 1 / 120;          // fixed step (s)
-export const SPEED = 4.2;           // world units / s
+export const SPEED = 4.2;           // world units / s  (base, infinite mode scales this)
+export const BASE_SPEED = 4.2;      // base speed for infinite mode
+export const SPEED_GROWTH = 0.04;   // speedMult increase per gate cleared
+export const MAX_SPEED_MULT = 2.5;  // cap on speed multiplier
 export const GRAVITY = 21;          // units / s^2
 export const FLAP_V = 8.6;          // upward velocity set by one flap
 export const FLOOR = 0;             // top of the ground
@@ -86,39 +93,100 @@ export function buildLevel(moves, seed = 1) {
 }
 
 export class Sim {
-  constructor(moves, seed = 1) {
-    this.level = buildLevel(moves, seed);
+  /**
+   * @param {number} moves  - flap budget (also used as N for level building)
+   * @param {number} seed   - RNG seed
+   * @param {boolean} infinite - when true, enables the infinite runner mode
+   */
+  constructor(moves, seed = 1, infinite = false) {
+    this.infinite = infinite;
     this.moves = moves;
+    this._seed = seed;
+    // Seeded RNG for infinite gate generation (separate from buildLevel's RNG)
+    this._rng = rng(seed * 13 + 7);
+    if (infinite) {
+      this.level = this._buildInfiniteLevel();
+    } else {
+      this.level = buildLevel(moves, seed);
+    }
     this.reset();
   }
+
+  /** Build a starter level for infinite mode: a few pre-placed gates, no exit pad. */
+  _buildInfiniteLevel() {
+    const R = rng(this._seed * 13 + 7);
+    const lo = 3.6, hi = 8.6;
+    const gates = [];
+    // Start with 3 gates to prime the pump
+    for (let i = 0; i < 3; i++) {
+      gates.push({
+        i,
+        x: LEAD + 8 + i * 10,
+        cy: lo + R() * (hi - lo),
+        gap: GAP,
+        passed: false,
+        coinTaken: false,
+      });
+    }
+    return { moves: this.moves, seed: this._seed, gates, padX: Infinity, length: Infinity, flapPlan: [], idealTime: 0 };
+  }
+
+  /** Procedurally append one new gate after the last existing gate. */
+  _spawnNextGate() {
+    const R = this._rng;
+    const lo = 3.6, hi = 8.6;
+    const gates = this.level.gates;
+    const last = gates[gates.length - 1];
+    // Space the next gate a bit further as speed increases
+    const baseSpacing = 9.5 + this.speedMult * 0.4;
+    const newGate = {
+      i: gates.length,
+      x: last.x + baseSpacing,
+      cy: lo + R() * (hi - lo),
+      // Gap shrinks slightly as you progress, min 3.5
+      gap: Math.max(3.5, GAP - this.passed * 0.04),
+      passed: false,
+      coinTaken: false,
+    };
+    gates.push(newGate);
+  }
+
   reset() {
     this.t = 0;
-    this.x = BIRD_X0 + LEAD * 0; // bird's world x; level coords are absolute x
     this.x = 0;
     this.y = START_Y;
     this.vy = 0;
-    this.flapsLeft = this.moves;
+    this.flapsLeft = this.infinite ? Infinity : this.moves;
     this.flapsUsed = 0;
     this.status = 'ready';      // ready | playing | won | lost
     this.cause = null;          // pipe | ceiling | trap | landed-short
     this.passed = 0;
     this.coins = 0;
     this.score = 0;
+    this.speedMult = 1.0;       // infinite mode speed multiplier
     this.events = [];           // consumed by renderer/audio each frame
     this.acc = 0;
-    this.level.gates.forEach(g => { g.passed = false; g.coinTaken = false; });
+    if (this.infinite) {
+      // Rebuild the infinite level with fresh gates; reset the RNG too
+      this._rng = rng(this._seed * 13 + 7);
+      this.level = this._buildInfiniteLevel();
+    } else {
+      this.level.gates.forEach(g => { g.passed = false; g.coinTaken = false; });
+    }
     this.tilt = 0;
   }
+
   /** Player pressed flap. */
   flap() {
     if (this.status === 'ready') { this.status = 'playing'; this.events.push({ type: 'start' }); }
     if (this.status !== 'playing') return false;
-    if (this.flapsLeft <= 0) { this.events.push({ type: 'empty' }); return false; }
-    this.flapsLeft--; this.flapsUsed++;
+    if (!this.infinite && this.flapsLeft <= 0) { this.events.push({ type: 'empty' }); return false; }
+    if (!this.infinite) { this.flapsLeft--; this.flapsUsed++; }
     this.vy = FLAP_V;
     this.events.push({ type: 'flap', left: this.flapsLeft });
     return true;
   }
+
   /** Advance by real dt seconds (accumulated into fixed steps). */
   advance(dt) {
     if (this.status === 'ready') { this.hover += dt; return; }
@@ -126,9 +194,11 @@ export class Sim {
     this.acc += Math.min(dt, 0.05);
     while (this.acc >= DT && this.status === 'playing') { this.acc -= DT; this.tick(); }
   }
+
   tick() {
     this.t += DT;
-    this.x += SPEED * DT;
+    const effectiveSpeed = this.infinite ? BASE_SPEED * this.speedMult : SPEED;
+    this.x += effectiveSpeed * DT;
     const b = stepBird(this.y, this.vy);
     this.y = b.y; this.vy = b.vy;
     this.tilt += ((Math.max(-1, Math.min(1, this.vy / 10))) - this.tilt) * 0.15;
@@ -136,6 +206,13 @@ export class Sim {
     const L = this.level;
 
     if (this.y > CEIL) { this.y = CEIL; if (this.vy > 0) this.vy = 0; }
+
+    // In infinite mode, prune gates that are far behind the bird (memory management)
+    if (this.infinite) {
+      while (L.gates.length > 0 && L.gates[0].x < bx - 30) {
+        L.gates.shift();
+      }
+    }
 
     for (const g of L.gates) {
       const l = g.x - PIPE_W / 2 - BIRD_R * 0.8, r = g.x + PIPE_W / 2 + BIRD_R * 0.8;
@@ -147,31 +224,52 @@ export class Sim {
       if (!g.passed && bx > g.x + PIPE_W / 2) {
         g.passed = true; this.passed++;
         this.events.push({ type: 'gate', i: g.i });
+        if (this.infinite) {
+          // Progressive difficulty: increase speed
+          this.speedMult = Math.min(MAX_SPEED_MULT, 1.0 + this.passed * SPEED_GROWTH);
+          // Keep 2 gates ahead of the bird at all times
+          const lookahead = L.gates.filter(gg => !gg.passed);
+          if (lookahead.length < 3) this._spawnNextGate();
+        }
       }
       if (!g.coinTaken && Math.abs(bx - g.x) < 0.7 && Math.abs(this.y - g.cy) < 0.95) {
         g.coinTaken = true; this.coins++;
         this.events.push({ type: 'coin', i: g.i });
       }
     }
+
+    // In infinite mode, always spawn gates ahead so the player never sees the end
+    if (this.infinite) {
+      const lastGate = L.gates[L.gates.length - 1];
+      if (lastGate && bx > lastGate.x - 20) this._spawnNextGate();
+    }
+
     // ground
     if (this.y - BIRD_R <= FLOOR) {
       this.y = FLOOR + BIRD_R;
-      const onPad = Math.abs(bx - L.padX) <= PAD_HALF;
-      if (onPad && this.passed >= L.gates.length) return this.win();
-      return this.lose(onPad ? 'gates' : 'trap');
+      if (!this.infinite) {
+        const onPad = Math.abs(bx - L.padX) <= PAD_HALF;
+        if (onPad && this.passed >= L.gates.length) return this.win();
+        return this.lose(onPad ? 'gates' : 'trap');
+      } else {
+        return this.lose('trap');
+      }
     }
-    // bird sailed past the pad while still airborne -> it will land beyond: death trap
+    // finite: bird sailed past the pad while still airborne -> death trap (no-op here, handled above)
   }
+
   win() {
     this.status = 'won'; this.cause = null;
-    this.score = this.passed * 100 + this.coins * 50 + 500 + this.flapsLeft * 75;
+    this.score = this.passed * 100 + this.coins * 50 + 500 + (this.infinite ? 0 : this.flapsLeft * 75);
     this.events.push({ type: 'win' });
   }
+
   lose(cause) {
     this.status = 'lost'; this.cause = cause;
     this.score = this.passed * 100 + this.coins * 50;
     this.events.push({ type: 'lose', cause });
   }
+
   /** absolute level-space x of the bird */
   get bx() { return this.x + LEAD; }
 }

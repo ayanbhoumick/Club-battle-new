@@ -26,8 +26,8 @@ const COIN_GEO = new THREE.CylinderGeometry(.42, .42, .14, 20).rotateX(Math.PI /
 const COIN_RIM = mat({ color: '#c98a00' }), COIN_FACE = mat({ color: '#ffd24a' }), COIN_FACE2 = mat({ color: '#ffe98a' });
 
 export class World {
-  constructor(canvas, { pixel = 3, onFrame = null, onBird = null, mode = 'menu', fonts = true } = {}) {
-    this.canvas = canvas; this.onBird = onBird; this.pixel = pixel; this.onFrame = onFrame; this.mode = mode;
+  constructor(canvas, { pixel = 3, onFrame = null, onBird = null, mode = 'menu', fonts = true, infinite = false } = {}) {
+    this.canvas = canvas; this.onBird = onBird; this.pixel = pixel; this.onFrame = onFrame; this.mode = mode; this.infinite = infinite;
     this.time = 0; this.running = false; this.paused = false; this.shake = 0; this.menuX = 0;
     this.reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance', alpha: false });
@@ -193,44 +193,59 @@ export class World {
       const m = mat({ map: tex }), dark = mat({ color: '#b3500f' });
       const p = new THREE.Mesh(new THREE.BoxGeometry(PIPE_W, h, 2.2), [m, m, dark, dark, m, m]); p.position.set(cx, y0 + h / 2, 0); return p;
     };
-    L.gates.forEach(g => {
-      const grp = new THREE.Group();
-      const yb = g.cy - g.gap / 2, yt = g.cy + g.gap / 2;
-      grp.add(mkPipe(g.x, ROAD_Y, yb));
-      grp.add(mkPipe(g.x, yt, CEIL + 14));
-      const cb = new THREE.Mesh(new THREE.BoxGeometry(PIPE_W + .5, .7, 2.6), [capMat, capMat, capTop, capBot, capMat, capMat]); cb.position.set(g.x, yb - .35, 0);
-      const ct = cb.clone(); ct.position.set(g.x, yt + .35, 0); grp.add(cb, ct);
-      lg.add(grp);
-      const coin = new THREE.Mesh(COIN_GEO, [COIN_RIM, COIN_FACE, COIN_FACE]); coin.position.set(g.x, g.cy, 0);
-      const shine = new THREE.Mesh(COIN_IN_GEO, [COIN_FACE2, COIN_FACE2, COIN_FACE2]); coin.add(shine); lg.add(coin);
-      const hl = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.halo, color: '#ffd24a', blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: .6 })); hl.scale.set(2.6, 2.6, 1); coin.add(hl); hl.position.z = .2;
-      this.hearts.push(coin);
-    });
-    // trap: spikes
-    const x0 = LEAD - 12, x1 = L.padX - PAD_HALF - .15, x2 = L.padX + PAD_HALF + .15, x3 = L.length + 22;
-    const cone = new THREE.ConeGeometry(.3, .82, 4); cone.rotateY(Math.PI / 4);
-    const spots = [];
-    for (let row = 0; row < 3; row++) {
-      const z = -.75 + row * .75, off = row % 2 ? .3 : 0;
-      for (let x = x0 + off; x < x3; x += .6) if (x < x1 || x > x2) spots.push([x, z]);
+    // Store pipe materials for reuse when spawning gates dynamically
+    this._pipeBase = pipeBase; this._capMat = capMat; this._capTop = capTop; this._capBot = capBot; this._mkPipe = mkPipe;
+    // Track which gate indices have 3D objects already built
+    this._builtGateIndices = new Set();
+
+    L.gates.forEach(g => this._buildGateMesh(g));
+
+    if (!sim.infinite) {
+      // trap: spikes
+      const x0 = LEAD - 12, x1 = L.padX - PAD_HALF - .15, x2 = L.padX + PAD_HALF + .15, x3 = L.length + 22;
+      const cone = new THREE.ConeGeometry(.3, .82, 4); cone.rotateY(Math.PI / 4);
+      const spots = [];
+      for (let row = 0; row < 3; row++) {
+        const z = -.75 + row * .75, off = row % 2 ? .3 : 0;
+        for (let x = x0 + off; x < x3; x += .6) if (x < x1 || x > x2) spots.push([x, z]);
+      }
+      const spikes = new THREE.InstancedMesh(cone, mat({ color: '#e63a62' }), spots.length); const d = new THREE.Object3D();
+      spots.forEach(([x, z], i) => { d.position.set(x, ROAD_Y + .41, z); d.updateMatrix(); spikes.setMatrixAt(i, d.matrix); }); spikes.frustumCulled = false; lg.add(spikes);
+      const pit = (a, b) => { const p = new THREE.Mesh(new THREE.PlaneGeometry(b - a, 2.4), mat({ color: '#5a0f2a' })); p.rotation.x = -Math.PI / 2; p.position.set((a + b) / 2, ROAD_Y + .02, 0); lg.add(p); };
+      pit(x0, x1); pit(x2, x3);
+      // exit pad + arch + beam
+      const pt = T.padTex(); pt.repeat.set(PAD_HALF * 2 / 1.0, 2.4 / 1.0); this.padTex = pt;
+      const pad = new THREE.Mesh(new THREE.BoxGeometry(PAD_HALF * 2, -ROAD_Y, 2.6), [mat({ color: '#1d8f6c' }), mat({ color: '#1d8f6c' }), mat({ map: pt }), mat({ color: '#0f4a39' }), mat({ color: '#25b387' }), mat({ color: '#25b387' })]);
+      pad.position.set(L.padX, ROAD_Y / 2, 0); lg.add(pad);
+      const arch = new Geo(); const ax = PAD_HALF + .35;
+      arch.box(-ax - .3, ROAD_Y, -1.6, .6, 6.2 - ROAD_Y, .6, '#2a3a46'); arch.box(ax - .3, ROAD_Y, -1.6, .6, 6.2 - ROAD_Y, .6, '#2a3a46'); arch.box(-ax - .5, 5.8, -1.8, 2 * ax + 1, .8, 1, '#3a4d5b');
+      const am = new THREE.Mesh(arch.build(), vertexMat()); am.position.x = L.padX; lg.add(am);
+      const st = T.signTex('EXIT', { w: 80, h: 24, size: 12 }); this.signs.push(st);
+      const sp = new THREE.Mesh(new THREE.PlaneGeometry(3.6, 1.08), mat({ map: st, fog: false })); sp.position.set(L.padX, 6.2, -1.28); lg.add(sp);
+      const beam = new THREE.Mesh(new THREE.CylinderGeometry(PAD_HALF * .8, PAD_HALF * .8, 14, 20, 1, true), new THREE.MeshBasicMaterial({ color: '#7dffd0', transparent: true, opacity: .09, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, fog: false }));
+      beam.position.set(L.padX, 7, 0); lg.add(beam); this.beam = beam;
+      const gh = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.halo, color: '#3dffb5', blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: .4 })); gh.scale.set(9, 5, 1); gh.position.set(L.padX, .6, .5); lg.add(gh);
     }
-    const spikes = new THREE.InstancedMesh(cone, mat({ color: '#e63a62' }), spots.length); const d = new THREE.Object3D();
-    spots.forEach(([x, z], i) => { d.position.set(x, ROAD_Y + .41, z); d.updateMatrix(); spikes.setMatrixAt(i, d.matrix); }); spikes.frustumCulled = false; lg.add(spikes);
-    const pit = (a, b) => { const p = new THREE.Mesh(new THREE.PlaneGeometry(b - a, 2.4), mat({ color: '#5a0f2a' })); p.rotation.x = -Math.PI / 2; p.position.set((a + b) / 2, ROAD_Y + .02, 0); lg.add(p); };
-    pit(x0, x1); pit(x2, x3);
-    // exit pad + arch + beam
-    const pt = T.padTex(); pt.repeat.set(PAD_HALF * 2 / 1.0, 2.4 / 1.0); this.padTex = pt;
-    const pad = new THREE.Mesh(new THREE.BoxGeometry(PAD_HALF * 2, -ROAD_Y, 2.6), [mat({ color: '#1d8f6c' }), mat({ color: '#1d8f6c' }), mat({ map: pt }), mat({ color: '#0f4a39' }), mat({ color: '#25b387' }), mat({ color: '#25b387' })]);
-    pad.position.set(L.padX, ROAD_Y / 2, 0); lg.add(pad);
-    const arch = new Geo(); const ax = PAD_HALF + .35;
-    arch.box(-ax - .3, ROAD_Y, -1.6, .6, 6.2 - ROAD_Y, .6, '#2a3a46'); arch.box(ax - .3, ROAD_Y, -1.6, .6, 6.2 - ROAD_Y, .6, '#2a3a46'); arch.box(-ax - .5, 5.8, -1.8, 2 * ax + 1, .8, 1, '#3a4d5b');
-    const am = new THREE.Mesh(arch.build(), vertexMat()); am.position.x = L.padX; lg.add(am);
-    const st = T.signTex('EXIT', { w: 80, h: 24, size: 12 }); this.signs.push(st);
-    const sp = new THREE.Mesh(new THREE.PlaneGeometry(3.6, 1.08), mat({ map: st, fog: false })); sp.position.set(L.padX, 6.2, -1.28); lg.add(sp);
-    const beam = new THREE.Mesh(new THREE.CylinderGeometry(PAD_HALF * .8, PAD_HALF * .8, 14, 20, 1, true), new THREE.MeshBasicMaterial({ color: '#7dffd0', transparent: true, opacity: .09, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, fog: false }));
-    beam.position.set(L.padX, 7, 0); lg.add(beam); this.beam = beam;
-    const gh = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.halo, color: '#3dffb5', blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: .4 })); gh.scale.set(9, 5, 1); gh.position.set(L.padX, .6, .5); lg.add(gh);
     this.resetRun();
+  }
+
+  /** Build and add the Three.js meshes for a single gate. */
+  _buildGateMesh(g) {
+    if (this._builtGateIndices.has(g.i)) return;
+    this._builtGateIndices.add(g.i);
+    const lg = this.levelGroup;
+    const mkPipe = this._mkPipe;
+    const grp = new THREE.Group();
+    const yb = g.cy - g.gap / 2, yt = g.cy + g.gap / 2;
+    grp.add(mkPipe(g.x, ROAD_Y, yb));
+    grp.add(mkPipe(g.x, yt, CEIL + 14));
+    const cb = new THREE.Mesh(new THREE.BoxGeometry(PIPE_W + .5, .7, 2.6), [this._capMat, this._capMat, this._capTop, this._capBot, this._capMat, this._capMat]); cb.position.set(g.x, yb - .35, 0);
+    const ct = cb.clone(); ct.position.set(g.x, yt + .35, 0); grp.add(cb, ct);
+    lg.add(grp);
+    const coin = new THREE.Mesh(COIN_GEO, [COIN_RIM, COIN_FACE, COIN_FACE]); coin.position.set(g.x, g.cy, 0);
+    const shine = new THREE.Mesh(COIN_IN_GEO, [COIN_FACE2, COIN_FACE2, COIN_FACE2]); coin.add(shine); lg.add(coin);
+    const hl = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.halo, color: '#ffd24a', blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: .6 })); hl.scale.set(2.6, 2.6, 1); coin.add(hl); hl.position.z = .2;
+    this.hearts.push(coin);
   }
   resetRun() {
     this.fall = null; this.shake = 0; this.parts.length = 0; this.flapT = 1; this.won = false; this.winT = 0;
@@ -244,8 +259,22 @@ export class World {
     for (const e of evs) {
       const p = this.birdPos;
       if (e.type === 'flap') { this.flapT = 0; this.burst(p.x - .5, p.y - .3, 0, ['#fff1dc', '#ffc4e8', '#ffffff'], 7, { speed: 2.2, up: .5, life: .45, size: .13, grav: 3 }); }
-      if (e.type === 'coin') { const h = this.hearts[e.i]; if (h) h.visible = false; this.burst(p.x, p.y, 0, ['#ffd24a', '#fff3b0', '#ff8a2a'], 16, { speed: 4.5, up: 3, life: .8, size: .15, grav: 8 }); }
-      if (e.type === 'gate') this.burst(p.x + .4, p.y, 0, ['#ffc27a', '#ffffff'], 6, { speed: 2.5, life: .5, size: .1, grav: 2 });
+      if (e.type === 'coin') {
+        // In infinite mode, coin hearts are indexed by gate.i (absolute), but hearts[] only holds
+        // gates built so far. Find by x position instead.
+        const h = this.hearts[e.i];
+        if (h) h.visible = false;
+        this.burst(p.x, p.y, 0, ['#ffd24a', '#fff3b0', '#ff8a2a'], 16, { speed: 4.5, up: 3, life: .8, size: .15, grav: 8 });
+      }
+      if (e.type === 'gate') {
+        this.burst(p.x + .4, p.y, 0, ['#ffc27a', '#ffffff'], 6, { speed: 2.5, life: .5, size: .1, grav: 2 });
+        // In infinite mode, build mesh for any upcoming gates that don't have one yet
+        if (this.sim?.infinite) {
+          for (const g of this.sim.level.gates) {
+            if (!this._builtGateIndices.has(g.i)) this._buildGateMesh(g);
+          }
+        }
+      }
       if (e.type === 'lose') {
         this.shake = this.reduced ? 0 : .7; this.fall = { y: p.y, vy: e.cause === 'trap' ? 0 : 3.5, rot: 0, trap: e.cause === 'trap' };
         this.burst(p.x, p.y, 0, ['#fff1dc', '#ff7ac8', '#ff9a2e', '#2a1d3f'], 34, { speed: 6, up: 5, life: 1, size: .18, grav: 12 });
@@ -312,7 +341,11 @@ export class World {
     // bats
     this.bats.forEach(b => { const u = b.userData; const x = ((u.off + tm * u.sp) % 90) - 45; b.position.set(this.camX + x, u.y + Math.sin(tm * 2 + u.ph) * .8, u.z); const f = Math.floor(tm * 7 + u.ph) % 2; u.A.visible = !f; u.B.visible = !!f; });
     // level anim
-    if (this.hearts) this.hearts.forEach((h, i) => { h.rotation.y = tm * 2.4 + i; h.position.y = (this.sim?.level.gates[i].cy ?? 0) + Math.sin(tm * 3 + i) * .12; });
+    if (this.hearts) this.hearts.forEach((h, i) => {
+      const gate = this.sim?.level.gates.find(g => g.i === i) ?? this.sim?.level.gates[i];
+      h.rotation.y = tm * 2.4 + i;
+      h.position.y = (gate?.cy ?? 0) + Math.sin(tm * 3 + i) * .12;
+    });
     if (this.padTex) this.padTex.offset.x = (tm * .5) % 1;
     if (this.beam) this.beam.material.opacity = .08 + Math.sin(tm * 3) * .025 + (this.won ? .06 : 0);
 
